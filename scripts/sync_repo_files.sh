@@ -42,6 +42,13 @@ source_dir="$(pwd)"
 tmp_dir="$(mktemp -d)"
 trap 'rm -rf "${tmp_dir}"' EXIT
 
+prometheus_orb_version="$(yq eval '.orbs.prometheus' .circleci/config.yml)"
+if [[ -z "${prometheus_orb_version}" ]]; then
+  echo_red '"ERROR: Unable to get CircleCI orb version'
+  exit 1
+fi
+
+## Internal functions
 github_api() {
   local url
   url="https://api.github.com/${1}"
@@ -82,6 +89,24 @@ post_pull_request() {
 check_license() {
   # Check to see if the input is an Apache license of some kind
   echo "$1" | grep --quiet --no-messages --ignore-case 'Apache License'
+}
+
+check_circleci_orb() {
+  local org_repo
+  local default_branch
+  org_repo="$1"
+  default_branch="$2"
+  local ci_config_url="https://raw.githubusercontent.com/${org_repo}/${default_branch}/.circleci/config.yml"
+
+  orb_version="$(curl -s --fail "${ci_config_url}" | yq eval '.orbs.prometheus' -)"
+  if [[ -z "${orb_version}" ]]; then
+    echo_red "ERROR: Failed to fetch CirleCI orb version from '${org_repo}'"
+    return 1
+  fi
+
+  if [[ "${orb_version}" != "${prometheus_orb_version}" ]]; then
+    echo "CircleCI-orb"
+  fi
 }
 
 process_repo() {
@@ -125,6 +150,13 @@ process_repo() {
     needs_update+=("${source_file}")
   done
 
+  local circleci
+  circleci="$(check_circleci_orb "${org_repo}" "${default_branch}")"
+  if [[ -n "${circleci}" ]]; then
+    echo "${circleci} needs updating."
+    needs_update+=("${circleci}")
+  fi
+
   if [[ "${#needs_update[@]}" -eq 0 ]] ; then
     echo "No files need sync."
     return
@@ -137,7 +169,10 @@ process_repo() {
 
   # Update the files in target repo by one from prometheus/prometheus.
   for source_file in "${needs_update[@]}"; do
-    cp -f "${source_dir}/${source_file}" "./${source_file}"
+    case "${source_file}" in
+      CircleCI-orb) yq eval -i ".orbs.prometheus = \"${prometheus_orb_version}\"" .circleci/config.yml ;;
+      *) cp -f "${source_dir}/${source_file}" "./${source_file}" ;;
+    esac
   done
 
   if [[ -n "$(git status --porcelain)" ]]; then
@@ -156,6 +191,7 @@ process_repo() {
   fi
 }
 
+## main
 for org in ${orgs}; do
   mkdir -p "${tmp_dir}/${org}"
   # Iterate over all repositories in ${org}. The GitHub API can return 100 items

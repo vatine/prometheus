@@ -110,6 +110,7 @@ jobs:
     executor: golang
     steps:
     - checkout
+    - run: curl -sL https://github.com/mikefarah/yq/releases/download/v4.6.3/yq_linux_amd64 -O "${PATH%%:*}/yq" && chmod -v +x "${PATH%%:*}/yq"
     - run: ./scripts/sync_repo_files.sh
 
 workflows:
